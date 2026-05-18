@@ -1,0 +1,156 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../../../apps/app/generated/client"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// TT-118: enumerated auth providers. Replaces a free-form `User.authProvider`
+// string. Per-provider linkage (OAuth `sub`, etc.) lives in the Account table.
+// This field on User is the *primary* provider used at signup.
+enum AuthProvider {
+  credentials
+  google
+  github
+  email // magic link (future)
+}
+
+model User {
+  id              String        @id @default(uuid())
+  name            String
+  email           String        @unique
+  password        String?
+  profileImage    String?
+  // TT-118: was String? — converted to AuthProvider enum.
+  authProvider    AuthProvider?
+  isEmailVerified Boolean?
+  roleId          String
+  role            Role          @relation(fields: [roleId], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  todos           Todo[]
+  // TT-118: NextAuth Prisma adapter relations.
+  accounts            Account[]
+  sessions            Session[]
+  // TT-118: password reset tokens (one row per outstanding reset request).
+  passwordResetTokens PasswordResetToken[]
+  // TT-118: per-user activity log (auth events, role changes, etc.).
+  activities          UserActivity[]
+
+  @@index([id, email])
+}
+
+model Role {
+  id         String    @id @default(uuid())
+  name       String    @unique
+  // TT-118: super-admin tier. Only super-admins can grant/revoke ADMIN
+  // or super-admin itself. Default false.
+  superAdmin Boolean   @default(false)
+  users      User[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+}
+
+// TT-118: NextAuth Prisma adapter tables. Schema follows the canonical
+// adapter spec verbatim — field names use snake_case (refresh_token,
+// access_token, etc.) because that's what `@next-auth/prisma-adapter`
+// expects on the model. Don't rename them.
+//
+// Account: links OAuth providers (Google, GitHub) and magic-link sign-ins
+// to a User row. One Account row per provider per user.
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String  // "oauth" | "credentials" | "email"
+  provider          String  // "google" | "github" | "credentials" | "email"
+  providerAccountId String  // OAuth `sub` for OAuth, User.id for credentials
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// Session: present so we can flip session strategy from JWT to "database"
+// later without a schema migration. Empty under the current JWT strategy.
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// VerificationToken: one-time-use tokens for magic-link sign-in (future).
+// Identifier is the email being verified; token is rotated on every
+// sign-in attempt by NextAuth's EmailProvider.
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// TT-118: one-time-use tokens for the forgot-password / reset-password flow.
+// Stored as a sha-256 hash at rest — the plaintext is sent in the email,
+// hashed again on incoming reset to look up the row. A DB leak doesn't
+// hand attackers active reset links.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique  // sha-256 hash
+  expires   DateTime
+  usedAt    DateTime?           // null until consumed; once set, never matches again
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expires])
+}
+
+// TT-118: combined audit + activity log. Auth events emit one row via the
+// `safeLogActivity()` helper inlined in packages/auth/buildAuthOptions.ts.
+// Best-effort writes — failures are swallowed so audit issues never break
+// auth flows.
+model UserActivity {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event     String
+  metadata  Json
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([event])
+}
+
+model Todo {
+  id          String    @id @default(uuid())
+  title       String
+  description String
+  isCompleted Boolean
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([id, userId])
+}

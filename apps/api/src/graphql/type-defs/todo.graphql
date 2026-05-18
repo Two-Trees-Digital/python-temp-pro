@@ -1,0 +1,59 @@
+type Todo {
+  id: ID!
+  title: String!
+  description: String!
+  isCompleted: String!
+  user: User!
+  createdAt: String!
+  updatedAt: String!
+}
+
+type Query {
+  getTodo(id: ID!): Todo
+  getAllTodos(
+    pageNo: Int
+    pageSize: Int
+    sortField: String
+    sortOrder: SortOrder
+  ): TodosList
+  getUserTodos(
+    userId: ID!
+    pageNo: Int
+    pageSize: Int
+    sortField: String
+    sortOrder: SortOrder
+  ): TodosList
+}
+
+enum SortOrder {
+  ASC
+  DESC
+}
+
+type TodosList {
+  todos: [Todo]
+  totalCount: Int
+  totalPages: Int
+  currentPage: Int
+}
+
+type Mutation {
+  createTodo(content: CreateTodoInput): Todo
+  updateTodo(content: UpdatePostInput): Todo
+  deleteTodo(id: ID!): Todo
+}
+
+input CreateTodoInput {
+  title: String!
+  description: String!
+  isCompleted: Boolean!
+  userId: String!
+}
+
+input UpdatePostInput {
+  id: ID!
+  title: String!
+  description: String!
+  isCompleted: Boolean!
+  userId: String!
+}

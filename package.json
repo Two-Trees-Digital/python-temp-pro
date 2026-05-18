@@ -1,0 +1,42 @@
+{
+  "name": "turbo-temp",
+  "private": true,
+  "scripts": {
+    "dev": "turbo dev --concurrency=14",
+    "build": "turbo build --filter=!worker --concurrency=14",
+    "build:worker": "turbo build --filter=worker --concurrency=14",
+    "start": "turbo start --concurrency=14",
+    "start:mobile": "turbo start:mobile --concurrency=14",
+    "android": "turbo android --concurrency=14",
+    "ios": "turbo ios --concurrency=14",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "db:generate": "turbo db:generate",
+    "db:push": "turbo db:push",
+    "bootstrap": "cd scripts/bootstrap && node index.js",
+    "bootstrap:install": "cd scripts/bootstrap && pnpm install",
+    "postinstall": "node scripts/hoist-styled-jsx.js",
+    "codegen": "graphql-codegen --config codegen.ts",
+    "codegen:check": "graphql-codegen --config codegen.ts && git diff --exit-code -- '**/__generated__/**' '**/*.generated.ts'"
+  },
+  "devDependencies": {
+    "@graphql-codegen/cli": "^5.0.2",
+    "@graphql-codegen/near-operation-file-preset": "^3.0.0",
+    "@graphql-codegen/typed-document-node": "^5.0.7",
+    "@graphql-codegen/typescript": "^4.0.7",
+    "@graphql-codegen/typescript-operations": "^4.2.1",
+    "@graphql-codegen/typescript-resolvers": "^4.1.0",
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "dotenv": "^16.4.5",
+    "prettier": "^3.2.4",
+    "prisma": "^5.15.0",
+    "turbo": "^1.13.0"
+  },
+  "packageManager": "pnpm@8.9.0",
+  "engines": {
+    "node": "22.x"
+  }
+}

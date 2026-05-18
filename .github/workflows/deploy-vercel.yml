@@ -1,0 +1,339 @@
+name: Deploy to Vercel
+
+# Test, migrate, and deploy pipeline for apps/app and apps/dashboard.
+#
+# On pull_request:
+#   - test                 (required merge gate)
+#   - schema-drift-check   (blocks PRs where schema.prisma changed without
+#                           a matching migration file)
+#
+# On push: main:
+#   - test
+#   - migrate-prisma       (runs `prisma migrate deploy` against the shared
+#                           DB before any Vercel deploy — prevents code
+#                           shipping ahead of migrations)
+#   - deploy-app           (needs: test + migrate-prisma)
+#   - deploy-dashboard     (needs: test + migrate-prisma)
+#
+# Required GitHub repo VARIABLES (set by create-app worker at provision time):
+#   VERCEL_TOKEN                — vercel.com/account/tokens
+#   VERCEL_ORG_ID               — your team/org ID
+#   VERCEL_APP_PROJECT_ID       — project ID for apps/app
+#   VERCEL_DASHBOARD_PROJECT_ID — project ID for apps/dashboard
+#
+# Required GitHub repo SECRETS:
+#   DIRECT_URL                  — Neon NON-POOLED URL. Pooled URLs don't
+#                                 work for DDL because pgBouncer breaks
+#                                 Prisma's migration connection patterns.
+#                                 (Not yet set by create-app — TT-17 will
+#                                 add this. Until then, migrate-prisma
+#                                 gracefully skips.)
+#
+# Optional GitHub repo SECRETS (enables smoke tests):
+#   APP_URL       — production URL of apps/app       (e.g. https://yourapp.com)
+#   DASHBOARD_URL — production URL of apps/dashboard (e.g. https://dashboard.yourapp.com)
+#
+# Vars-vs-secrets note: Vercel credentials are vars because they're set
+# plaintext by the create-app worker via the GitHub API (vars endpoint,
+# not secrets — create-app can't write secrets via API without more
+# elaborate permissions). Database URLs stay as secrets because they
+# contain passwords.
+#
+# Graceful skip: if VERCEL_TOKEN var is not set, deploy steps skip. If
+# DIRECT_URL secret is not set, the migrate-prisma job skips (workflow
+# still passes, deploys still run). This lets the workflow land in
+# newly-provisioned apps before their credentials are fully configured,
+# then auto-enable as they are added.
+
+on:
+  # Run tests on every PR so branch protection can gate merges on them.
+  # Only deploy to Vercel on actual pushes to main (jobs below are gated
+  # on github.event_name to skip deploys during PR runs).
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  # workflow_dispatch must be declared here for the create-app worker's
+  # step 10 (triggerWorkflowDispatch) to actually queue a run. Without it,
+  # POST /actions/workflows/{id}/dispatches returns 204 but silently
+  # no-ops. See TT-38.
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Check Next.js peer dep path hasn't broken
+        # Guards against the vitest-style outage where pnpm silently changes
+        # the Next.js peer dep resolution path and breaks styled-jsx.
+        # See CLAUDE.md §5.1 in two-trees-digital-new for the full story.
+        run: |
+          echo "Next.js resolution paths in lockfile:"
+          grep "^  /next@" pnpm-lock.yaml || true
+          # If either app/dashboard's Next.js path changed format, warn loudly
+          if ! grep -q "node_modules/styled-jsx" node_modules/styled-jsx/package.json 2>/dev/null; then
+            echo "⚠️  Warning: styled-jsx not hoisted to root. The postinstall script should have handled this."
+            echo "If the app fails with 'Cannot find module styled-jsx' at runtime, check hoist-styled-jsx.js"
+          fi
+
+      - name: Run tests
+        run: pnpm test
+
+  schema-drift-check:
+    name: Check schema changes have matching migration
+    runs-on: ubuntu-latest
+    # PR-time guard. Fails the PR if packages/database/prisma/schema.prisma
+    # changed but no new file appeared under packages/database/prisma/migrations/.
+    # Catches the "edited schema but forgot to run prisma migrate dev" mistake
+    # before it can merge to main.
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Need full history to diff against the PR base commit
+          fetch-depth: 0
+
+      - name: Check for unmatched schema changes
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          CHANGED_FILES=$(git diff --name-only "$BASE" "$HEAD")
+
+          SCHEMA_CHANGED=0
+          if echo "$CHANGED_FILES" | grep -q 'packages/database/prisma/schema\.prisma$'; then
+            SCHEMA_CHANGED=1
+          fi
+
+          MIGRATION_ADDED=0
+          if echo "$CHANGED_FILES" | grep -qE 'packages/database/prisma/migrations/[^/]+/migration\.sql$'; then
+            MIGRATION_ADDED=1
+          fi
+
+          echo "schema.prisma changed in PR: $SCHEMA_CHANGED"
+          echo "new migration file added in PR: $MIGRATION_ADDED"
+          echo ""
+
+          if [ "$SCHEMA_CHANGED" -eq 1 ] && [ "$MIGRATION_ADDED" -eq 0 ]; then
+            echo "❌ schema.prisma changed but no matching migration file was added."
+            echo ""
+            echo "Run this locally to generate one:"
+            echo "   cd packages/database && npx prisma migrate dev --name describe_your_change"
+            echo ""
+            echo "Then commit the generated migration file and push again."
+            echo ""
+            echo "If your schema.prisma change is truly cosmetic (comment-only edit)"
+            echo "and you want to bypass this check, generate a no-op migration:"
+            echo "   cd packages/database && npx prisma migrate dev --create-only --name cosmetic_noop"
+            exit 1
+          fi
+
+          echo "✅ Schema change check passed."
+
+  migrate-prisma:
+    name: Deploy Prisma migrations
+    needs: test
+    runs-on: ubuntu-latest
+    # Runs on push to main BEFORE Vercel deploys. If this fails, the deploy
+    # jobs below don't run (they `needs:` this job), so prod never gets
+    # code that expects missing schema.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check migration configuration
+        id: check
+        run: |
+          if [ -n "${{ secrets.DIRECT_URL }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  DIRECT_URL secret not set — skipping migration."
+            echo "    Deploys will still run. To enable auto-migration, add the"
+            echo "    non-pooled DB URL as the DIRECT_URL repo secret."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install pnpm
+        if: steps.check.outputs.configured == 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.check.outputs.configured == 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Apply migrations with pre/post status
+        if: steps.check.outputs.configured == 'true'
+        env:
+          # Prisma reads both. migrate deploy uses directUrl when set in
+          # schema. Both point at the non-pooled URL here since the CI
+          # runner is short-lived and doesn't need a pooled connection.
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        working-directory: packages/database
+        run: |
+          echo "=== migration status BEFORE deploy ==="
+          # `migrate status` can exit non-zero when migrations are pending
+          # (which is exactly why we're about to run them), so don't fail on it.
+          npx prisma migrate status || true
+          echo ""
+          echo "=== applying pending migrations ==="
+          npx prisma migrate deploy
+          echo ""
+          echo "=== migration status AFTER deploy ==="
+          npx prisma migrate status
+
+  deploy-app:
+    name: Deploy app → Vercel
+    needs: [test, migrate-prisma]
+    runs-on: ubuntu-latest
+    # Skip deploy on pull requests — only run on push to main
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Guard: skip everything below if VERCEL_TOKEN secret is not configured.
+      - name: Check Vercel configuration
+        id: check
+        run: |
+          if [ -n "${{ vars.VERCEL_TOKEN }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  VERCEL_TOKEN secret not set — skipping deployment"
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Vercel CLI
+        if: steps.check.outputs.configured == 'true'
+        run: npm install -g vercel@latest
+
+      - name: Deploy app to Vercel
+        if: steps.check.outputs.configured == 'true'
+        run: vercel deploy --prod --token=${{ vars.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_APP_PROJECT_ID }}
+
+      # Smoke test: hit /api/health after deploy and fail if DB is not reachable.
+      # Requires APP_URL secret to be set (skipped gracefully if not).
+      - name: Smoke test app
+        if: steps.check.outputs.configured == 'true'
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "ℹ️  APP_URL not set — skipping smoke test"
+            exit 0
+          fi
+          echo "Waiting 15s for deployment to propagate..."
+          sleep 15
+          echo "Testing $APP_URL/api/health ..."
+          RESPONSE=$(curl -sL -w "\n%{http_code}" --max-time 30 "$APP_URL/api/health")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Status: $HTTP_CODE"
+          echo "Body:   $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Smoke test FAILED — /api/health returned $HTTP_CODE"
+            echo "This means the deployment is broken in production."
+            exit 1
+          fi
+          DB_STATUS=$(echo "$BODY" | grep -o '"db":"[^"]*"' | cut -d'"' -f4)
+          if [ "$DB_STATUS" != "ok" ]; then
+            echo "❌ Smoke test FAILED — DB check returned: $DB_STATUS"
+            exit 1
+          fi
+          echo "✅ Smoke test passed — app is live and DB is reachable"
+
+  deploy-dashboard:
+    name: Deploy dashboard → Vercel
+    needs: [test, migrate-prisma]
+    runs-on: ubuntu-latest
+    # Skip deploy on pull requests — only run on push to main
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Vercel configuration
+        id: check
+        run: |
+          if [ -n "${{ vars.VERCEL_TOKEN }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  VERCEL_TOKEN secret not set — skipping deployment"
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Vercel CLI
+        if: steps.check.outputs.configured == 'true'
+        run: npm install -g vercel@latest
+
+      - name: Deploy dashboard to Vercel
+        if: steps.check.outputs.configured == 'true'
+        run: vercel deploy --prod --token=${{ vars.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_DASHBOARD_PROJECT_ID }}
+
+      # Smoke test: hit /api/health after deploy and fail if DB is not reachable.
+      - name: Smoke test dashboard
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+        run: |
+          if [ -z "$DASHBOARD_URL" ]; then
+            echo "ℹ️  DASHBOARD_URL not set — skipping smoke test"
+            exit 0
+          fi
+          echo "Waiting 15s for deployment to propagate..."
+          sleep 15
+          echo "Testing $DASHBOARD_URL/api/health ..."
+          RESPONSE=$(curl -sL -w "\n%{http_code}" --max-time 30 "$DASHBOARD_URL/api/health")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Status: $HTTP_CODE"
+          echo "Body:   $BODY"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Smoke test FAILED — /api/health returned $HTTP_CODE"
+            echo "This means the deployment is broken in production."
+            exit 1
+          fi
+          DB_STATUS=$(echo "$BODY" | grep -o '"db":"[^"]*"' | cut -d'"' -f4)
+          if [ "$DB_STATUS" != "ok" ]; then
+            echo "❌ Smoke test FAILED — DB check returned: $DB_STATUS"
+            exit 1
+          fi
+          echo "✅ Smoke test passed — dashboard is live and DB is reachable"

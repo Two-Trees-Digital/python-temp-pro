@@ -1,0 +1,85 @@
+type User {
+  id:              ID!
+  name:            String
+  email:           String!
+  profileImage:    String
+  authProvider:    AuthProvider
+  isEmailVerified: Boolean
+  role:            Role
+  todos:           [Todo]
+  createdAt:       DateTime
+  updatedAt:       DateTime
+}
+
+enum AuthProvider {
+  credentials
+  google
+  github
+  email
+}
+
+type Query {
+  # The authenticated viewer. Resolves from context.actor.
+  # Returns null only if the actor's userId doesn't match a User row;
+  # returns null too if there is no actor (public schema field).
+  me: User
+
+  # Legacy stubs — kept for the dashboard/app's existing call sites until
+  # they migrate. Remove alongside the legacy mutations below.
+  getUser(id: String!): User
+  getUsers(
+    pageNo: Int
+    pageSize: Int
+    sortField: String
+    sortOrder: SortOrder
+  ): UsersList
+}
+
+enum SortOrder {
+  ASC
+  DESC
+}
+
+type UsersList {
+  users: [User]
+  totalCount: Int
+  totalPages: Int
+  currentPage: Int
+}
+
+type Mutation {
+  # Legacy stubs — packages/auth and NextAuth handle real auth flows.
+  # These remain so the dashboard/app can compile while their REST/auth
+  # surface migrates.
+  registerUser(content: RegisterUserInput!): LoginRegisterRes!
+  loginUser(content: LoginUserInput!): LoginRegisterRes!
+  adminLogin(content: LoginUserInput!): LoginRegisterRes!
+  verifyEmail(token: String): verifyEmailRes!
+}
+
+type LoginRegisterRes {
+  id: ID!
+  name: String!
+  email: String!
+  profileImage: String
+  role: Role!
+  token: String!
+}
+
+input RegisterUserInput {
+  name: String!
+  email: String!
+  password: String!
+  profileImage: String
+}
+
+input LoginUserInput {
+  email: String!
+  password: String!
+}
+
+type verifyEmailRes {
+  error: Boolean!
+  message: String!
+  user: User
+}

@@ -1,0 +1,15 @@
+# Shared scalars for the api schema.
+#
+# DateTime — ISO-8601 string. Resolvers return `string` (already serialized
+# from Prisma Date via .toISOString()). Client receives `string`. Codegen
+# maps DateTime → string on both server and client by default unless
+# overridden in codegen.ts. Keeps JSON simple, no Date deserialization
+# on the client.
+#
+# JSON — arbitrary serializable shape. Used where the schema needs to be
+# permissive (event-type-dependent payloads, forward-compat extension
+# points on async jobs). Always serializable to JSON — no Date /
+# undefined / functions.
+
+scalar DateTime
+scalar JSON

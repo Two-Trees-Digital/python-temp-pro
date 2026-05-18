@@ -1,0 +1,23 @@
+{
+  "name": "turbo-temp-bootstrap",
+  "version": "1.0.0",
+  "description": "Bootstrap CLI for turbo-temp — spins up a new project end-to-end",
+  "type": "module",
+  "bin": {
+    "create-turbo-temp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.540.0",
+    "@aws-sdk/client-secrets-manager": "^3.540.0",
+    "@linear/sdk": "^18.0.0",
+    "@octokit/rest": "^20.1.1",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "inquirer": "^9.2.16",
+    "ora": "^8.0.1",
+    "tweetsodium": "^0.0.5"
+  }
+}

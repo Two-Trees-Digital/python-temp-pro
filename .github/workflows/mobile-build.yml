@@ -1,0 +1,76 @@
+name: Mobile EAS Build
+
+# EAS build pipeline for apps/mobile. Triggers on PRs (preview profile)
+# and on push to main (production profile). Path-scoped to apps/mobile/**
+# so unrelated changes don't burn EAS minutes. Skips gracefully when
+# EXPO_TOKEN repo secret is missing — useful before the operator has
+# enrolled in Apple Dev Program / wired their Expo account up.
+#
+# Required GitHub Secrets (set up after `eas init`):
+#   EXPO_TOKEN — expo.dev/settings/access-tokens
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: EAS build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check EAS configuration
+        id: check
+        run: |
+          if [ -n "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  EXPO_TOKEN secret not set — skipping EAS build."
+            echo "    Add the token at expo.dev/settings/access-tokens, then"
+            echo "    save it as the EXPO_TOKEN repo secret."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install pnpm
+        if: steps.check.outputs.configured == 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up EAS CLI
+        if: steps.check.outputs.configured == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        if: steps.check.outputs.configured == 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run EAS preview build (PR)
+        if: steps.check.outputs.configured == 'true' && github.event_name == 'pull_request'
+        working-directory: apps/mobile
+        run: eas build --platform all --profile preview --non-interactive --no-wait
+
+      - name: Run EAS production build (push to main)
+        if: steps.check.outputs.configured == 'true' && github.event_name == 'push'
+        working-directory: apps/mobile
+        run: eas build --platform all --profile production --non-interactive --no-wait
