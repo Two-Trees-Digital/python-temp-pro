@@ -1,46 +1,106 @@
-# turbo-temp — Contributor & AI Agent Guide (Template)
+# python-temp-pro — Contributor & AI Agent Guide
 
-**turbo-temp is the monorepo template** that new Two Trees Digital apps are provisioned from via the create-app flow in two-trees-digital-new's admin dashboard. Changes here propagate to every future app provisioned after the change lands.
+**python-temp-pro is the Node-monorepo half of a composite template pair.** New apps provisioned from `python-temp-pro` via create-app get TWO repos: this Node template (Next.js apps + GraphQL + BullMQ worker) AND the paired Python FastAPI service ([python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service)). They share a Neon Postgres DB and authenticate to each other via HMAC.
 
-> **For the full workflow contract** (phased commit/PR gate protocol, testing contract, dangerous-change checklist, known gotchas, AI agent operating rules, multi-agent coordination protocol): see [**`CLAUDE.md` in two-trees-digital-new**](https://github.com/Two-Trees-Digital/two-trees-digital-new/blob/main/CLAUDE.md).
->
-> That file is the authoritative source of truth for how work happens across Two Trees projects. This file (`turbo-temp/CLAUDE.md`) only covers what's template-specific.
+> **For the full workflow contract** (phased commit/PR gate protocol, testing contract, dangerous-change checklist, known gotchas, AI agent operating rules, multi-agent coordination protocol): see [**`CLAUDE.md` in two-trees-digital-new**](https://github.com/Two-Trees-Digital/two-trees-digital-new/blob/main/CLAUDE.md). That file is the authoritative source of truth across Two Trees projects. This file only covers what's specific to the python-temp-pro composite.
 
 ---
 
-## Working on turbo-temp itself
+## Composite-pair shape
 
-When you edit turbo-temp:
+- **Two repos per spawned project**: Node monorepo (from this template) + Python service (from python-temp-pro-service)
+- **Shared Neon Postgres database**: Prisma (Node, this repo) owns User/Role/Auth tables; SQLAlchemy (Python service) owns domain tables
+- **Cross-service auth via HMAC**: `HMAC_SHARED_SECRET` must match EXACTLY on both Vercel (Node) and Railway (Python). Mismatch → silent 401s
+- **`user_id` references on Python side** are plain `String` FKs (no SQLAlchemy ForeignKey constraint) — DB-level FK enforced by Prisma
 
-1. **Every change here will be inherited by all future apps** provisioned from this template. Existing provisioned apps do NOT auto-update — they have a frozen copy of turbo-temp from the moment they were bootstrapped.
-2. For high-risk changes (anything that affects build, deploy, or runtime correctness — see two-trees's CLAUDE.md §5 and §6): ship, merge, and then **provision one real test app** from the create-app flow to validate the change end-to-end. Tear down the test app after. Manual resource cleanup applies until TT-18's testing strategy lands.
-3. Branch naming follows the same `[A-Z]+-[0-9]+` convention that the auto-link commit hook expects. Use `TT-#` prefix for turbo-temp-specific tickets tracked in the Two Trees Digital Linear project.
+---
 
-## What's in turbo-temp that new apps inherit
+## When to use which template
 
-The big load-bearing pieces (all documented in detail in two-trees's CLAUDE.md §5):
+| Scenario | Template |
+|---|---|
+| Pure Node app, no Python compute needed | `turbo-temp` |
+| Node app + Python compute service, no agents | **python-temp-pro** (this) |
+| Node app + Python multi-agent (LangGraph) service | `lang-temp-pro` |
 
-- **Styled-jsx hoist** — `scripts/hoist-styled-jsx.js` + root `postinstall` hook + `apps/app/next.config.mjs` `outputFileTracingIncludes` + worker Dockerfile `COPY scripts/` before install. Prevents a specific pnpm+Vercel Lambda symlink failure mode. **Do not remove any of these without reading two-trees's §5.1.**
-- **Lazy queue pattern** — `packages/queue/index.ts` uses `getConnection()` / `getCreateAppQueue()` / `getNotifyQueue()` getter functions (not eager `const connection = new IORedis(...)`). Prevents `next build` from failing with `ECONNREFUSED 127.0.0.1:6379`. See §5.3.
-- **Prisma generate postinstall** — `packages/database/package.json` runs `prisma generate` automatically during `pnpm install`. Worker Dockerfile has the corresponding `COPY packages/database/prisma/` before install. See §5.9 + §5.10.
-- **Turbo pinned to `^1.13.0`** — root `package.json`. Do not upgrade to 2.x; per-package task filters break. See §5.4.
-- **Health endpoints** — `/api/health` on both app and dashboard, with `/healthz` / `/ping` / `/health` rewrites. Used by the dashboard's health-check cron and by this workflow's smoke tests.
-- **CI workflow** — `.github/workflows/deploy-vercel.yml` runs `test`, `schema-drift-check`, `migrate-prisma`, `deploy-app`, `deploy-dashboard` with smoke tests. Gracefully skips steps when required secrets/vars aren't set. See §3.3.
+If a spawned app starts here and later needs agents, the migration path is: add LangGraph to the Python service. The Node side doesn't change much (some SSE wiring) and lang-temp-pro's Node half is a superset of this template.
 
-## Deferred — not in turbo-temp yet
+---
 
-- **Sentry integration** (instrumentation files, sentry configs, `global-error.tsx`). Held until Sentry is proven stable in two-trees-digital-new. Will be synced in a future TT-16 follow-up ticket.
-- **Full CLAUDE.md template** — this file is currently a shim pointing at two-trees's. Replacement plan tracked in **TT-35**: a fully adapted ~500-line CLAUDE.md with placeholders for project-specific content, customized per-app at provision time.
+## Calling the paired Python service
 
-## When a new app is provisioned from this template
+Three patterns wired in this template — pick the right one per use case:
 
-create-app clones turbo-temp, creates a new GitHub repo + Vercel projects + Neon DB + Upstash Redis + Railway worker + Linear project, and drops the new app's specifics (Linear project prefix, Vercel project IDs, Neon connection strings, etc.) into GitHub repo variables and Vercel env vars.
+### Worker queue (recommended for most cross-service calls)
 
-Agents working on a newly-provisioned app should treat **two-trees's CLAUDE.md as the primary contract** for now. When TT-35 lands, this file will be replaced with a more useful self-contained guide.
+Producer enqueues a `PythonServiceJobData` payload; the worker (`apps/worker/src/queues/python-service.ts`) dequeues, HMAC-signs, POSTs to the Python service. BullMQ retry policy handles transient failures.
 
-## Related tickets
+```ts
+import { getPythonServiceQueue } from "queue";
 
-- TT-16 — umbrella for syncing improvements from two-trees-digital-new to this template
-- TT-17 — create-app worker pipeline hardening (env var ordering, Vercel Git integration, etc.)
-- TT-18 — create-app testing strategy (mocks + dry-run + auto-cleanup)
-- TT-35 — replace this shim with a full generic-template CLAUDE.md
+await getPythonServiceQueue().add("my-job", {
+  endpoint: "/my-endpoint",
+  payload:  { userId, foo: "bar" },
+});
+```
+
+### Direct from Apollo resolver (low-latency, blocking)
+
+Use `signedPost()` from `packages/queue` directly:
+
+```ts
+import { signedPost } from "queue";
+
+const result = await signedPost({
+  url:    `${process.env.PYTHON_SERVICE_URL}/my-endpoint`,
+  body:   { userId },
+  secret: process.env.HMAC_SHARED_SECRET!,
+});
+```
+
+### Browser → Python service (proxy through Next.js)
+
+The browser **never** sees `HMAC_SHARED_SECRET`. Proxy via a Next.js route handler in `apps/dashboard/src/app/api/` that mints whatever auth is appropriate for the browser context.
+
+---
+
+## What's load-bearing in this template
+
+- **`packages/queue/hmacSign.ts`** — the cross-service HMAC contract. Signature format MUST match python-temp-pro-service's `app/auth.py`. Don't change the format without changing both sides.
+- **`packages/queue/index.ts`** — `getPythonServiceQueue()` + `PythonServiceJobData` type. Producers depend on this shape.
+- **`packages/env/index.ts`** — `pythonServiceEnvSchema` enforces `PYTHON_SERVICE_URL` + `HMAC_SHARED_SECRET` at validation time. Apps that use the composite pattern merge this into their env schema.
+- **`apps/worker/src/queues/python-service.ts`** — the Worker that signs + POSTs. Single source of truth for Node → Python calls.
+
+Everything else inherited from turbo-temp (styled-jsx hoist, lazy queue pattern, Prisma postinstall, Turbo pin, health endpoints, CI workflows) still applies — see the turbo-temp CLAUDE.md notes.
+
+---
+
+## Working on this template itself
+
+1. **Every change here is inherited by all future apps** provisioned from this template. Existing provisioned apps do NOT auto-update — they have a frozen copy of python-temp-pro from bootstrap time.
+2. **For high-risk changes** (HMAC signature format, queue payload shape, env-var contracts): coordinate with python-temp-pro-service. The two halves share an interface — breaking it on one side without the other = silent prod outage.
+3. **For Node-only changes** (UI tweaks, new packages, dashboard pages): same testing contract as turbo-temp.
+4. **Provision one real test app pair** from create-app to validate end-to-end after high-risk changes. Tear down after.
+
+---
+
+## Conventions for agents working in this repo
+
+- **Don't run `git` from a sandbox** — sandbox runs as a non-owner user and contaminates `.git/` permissions. Use file tools for edits, hand off commit chains to the human.
+- **No emoji in code, comments, or commit messages** unless explicitly requested.
+- **Code comments are terse**: 1-4 lines, what + non-obvious gotcha only. Rationale belongs in commit messages.
+- **READMEs stay ticket-agnostic** — describe current state, not history. No TT-XXX references in README files.
+- **Commit messages end with "Closes TICKET-ID"** when there's a linked ticket; auto-closes the ticket on PR merge.
+- **No Co-Authored-By lines** in commits.
+- **Stop commit chains at `git push`** — humans open PRs themselves.
+
+---
+
+## Related repos + tickets
+
+- **[python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service)** — Python half of this pair
+- TT-183 — extract python-temp-pro from trading-agents-service (this work)
+- TT-352 — extract lang-temp-pro (LangGraph overlay on top of python-temp-pro)
+- TT-184 — add Railway provider to bootstrap CLI
+- TT-185 — add `--template` selection to bootstrap CLI (this template becomes one of 6 options)
+- TT-188 — add composite project type to create-app (spawns both halves of the pair)

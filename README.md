@@ -1,648 +1,240 @@
-# turbo-temp — Full-Stack Monorepo Template
+# 🌲🐍 python-temp-pro — Node + Python Composite Template
 
-> **Two Trees Digital** | Turborepo + pnpm + Next.js 14 + Prisma + BullMQ + Docker
+> **Two Trees Digital** | Node monorepo (Turborepo + pnpm + Next.js 14 + Prisma + BullMQ) + paired Python service (FastAPI)
 
-A production-ready full-stack monorepo template for building scalable web applications. Built on **Turborepo**, **pnpm workspaces**, and **Next.js 14**, with first-class support for **Prisma + PostgreSQL**, **BullMQ job queues**, and **Docker-based workers**.
+The **Node half** of the `python-temp-pro` composite template pair. Pairs with **[python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service)** (the Python FastAPI half) to spawn full Node + Python composite apps — same shape as `lyceum-fund` + `trading-agents-service`, but **without LangGraph or agent code**.
 
-This is a **template repository** designed to be cloned and customized for your own projects. It provides a solid foundation for multi-app architectures with shared packages, database-first design, and automated deployments.
+For agent apps (LangGraph + structured-output extraction + SSE streaming), use `lang-temp-pro` + `lang-temp-pro-service` instead.
 
----
-
-## Overview
-
-turbo-temp provides a complete foundation for full-stack development:
-
-- **Monorepo orchestration** — Turborepo + pnpm workspaces with fast, incremental builds
-- **Multi-app architecture** — Next.js marketing site, admin dashboard, and scalable worker service
-- **Shared packages** — Prisma database ORM, React component library, ESLint/TypeScript configs, email service, generic job queue
-- **Production infrastructure** — GitHub Actions, Vercel deployments, Docker workers
-- **Extensible design** — Generic queue factory, email templates, and database schema ready to customize
-- **Database-first** — Prisma migrations, auto-generated types, soft-delete support
-
-### Key Stats
-
-| Metric | Value |
-|--------|-------|
-| **Node.js version** | 22.x (LTS) |
-| **Package manager** | pnpm 8.9.0 |
-| **Primary framework** | Next.js 14 (App Router) |
-| **Database** | PostgreSQL + Prisma ORM |
-| **Job queue** | BullMQ + Redis |
-| **Deployment** | Vercel (frontend), Docker (worker) |
-| **CI/CD** | GitHub Actions |
+For Node-only apps with no Python half, use [turbo-temp](https://github.com/Two-Trees-Digital/turbo-temp) directly.
 
 ---
 
-## Repository Structure
+## Composite-pair shape
 
 ```
-turbo-temp/
-├── apps/
-│   ├── app/              — Next.js 14 marketing/main site (port 3000)
-│   ├── dashboard/        — Next.js 14 admin dashboard (port 3001)
-│   └── worker/           — BullMQ job processor (Docker)
-│
-├── packages/
-│   ├── database/         — Prisma ORM + schema (PostgreSQL)
-│   ├── queue/            — BullMQ queue factory + Redis client
-│   ├── email/            — Resend transactional-email wrapper
-│   ├── auth/             — Shared NextAuth config + password-reset helpers
-│   ├── env/              — Tiny env-context helpers (isLocal/marketingAppUrl/…)
-│   ├── ui/               — Shared React component library
-│   ├── eslint-config/    — Shared ESLint presets
-│   └── typescript-config/ — Shared tsconfig bases
-│
-├── .github/
-│   └── workflows/
-│       └── deploy-vercel.yml — CI/CD pipeline (build → deploy)
-│
-├── turbo.json            — Turborepo pipeline config + caching
-├── pnpm-workspace.yaml   — pnpm workspace definitions
-├── package.json          — Root package scripts
-├── docker-compose.yaml   — Local dev database/Redis services
-└── .env                  — Root environment variables
+This repo (python-temp-pro)
+├── Node monorepo (Next.js apps, GraphQL API, BullMQ worker)
+│     ↕  HMAC-signed POST + shared Neon DB
+└── python-temp-pro-service (separate repo, FastAPI)
+      └── Headless Python compute layer
 ```
+
+- **Two repos per spawned project** — one Node monorepo (this template), one Python service ([python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service))
+- **Shared Neon Postgres database.** Prisma (this repo) owns User/Role/Auth tables; SQLAlchemy (Python service) owns its own domain tables. `user_id` columns on the Python side reference Prisma's User table via DB-level FK.
+- **HMAC-signed cross-service calls.** This Node side signs POST requests with `HMAC_SHARED_SECRET`; the Python service verifies in its middleware.
+- **Independent deploys.** Vercel deploys the Node side; Railway deploys the Python service. Both pull from the same Neon DB.
 
 ---
 
-## Getting Started
+## What's in this template (Node side)
+
+| Layer | Description |
+|---|---|
+| **apps/app** | Next.js 14 user-facing app (port 3000) |
+| **apps/dashboard** | Next.js 14 admin dashboard (port 3001) |
+| **apps/api** | Apollo Server v4 GraphQL — canonical typed API surface |
+| **apps/worker** | BullMQ worker: email-verification + python-service queues |
+| **apps/mobile** | React Native (Expo) — optional, remove if unused |
+| **packages/queue** | BullMQ wrappers + HMAC signer (`signedPost`) for Python calls |
+| **packages/env** | Env-context helpers + Zod validation including `pythonServiceEnvSchema` |
+| **packages/database** | Prisma schema + migrations |
+| **packages/auth, email, ui, …** | Shared NextAuth, Resend wrapper, React components |
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| **Monorepo** | Turborepo + pnpm workspaces |
+| **Frontend** | Next.js 14 App Router, React 18, Tailwind |
+| **API** | Apollo Server v4 (`apps/api`); `@apollo/client@^3.8` in Next apps |
+| **Auth** | NextAuth v4 via `packages/auth` |
+| **Database** | PostgreSQL (Neon) + Prisma; shared with the paired Python service |
+| **Job queue** | BullMQ + Upstash Redis |
+| **Cross-service** | HMAC-signed POST to Python service via `signedPost()` in `packages/queue` |
+| **Email** | Resend (verification + password reset) |
+| **Hosting** | Vercel (apps) + Railway (apps/worker) |
+| **CI/CD** | GitHub Actions: `deploy-vercel.yml` + `build-worker.yml` + `build-api.yml` |
+
+---
+
+## Getting started
 
 ### Prerequisites
 
-- **Node.js** 22.x
-- **pnpm** 8.9.0+ (`npm install -g pnpm@8.9.0`)
-- **PostgreSQL** database (local or cloud)
-- **Redis** instance (local or cloud)
-- **Git** for version control
+- Node.js 22+
+- pnpm 8.9.0+
+- PostgreSQL (local or Neon)
+- Redis (local or Upstash)
+- The paired Python service running locally or deployed — see [python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service)
 
-### 1. Clone the Repository
+### 1. Use this template
 
-```bash
-git clone https://github.com/Two-Trees-Digital/turbo-temp.git your-project
-cd your-project
-```
+Click "Use this template" on GitHub OR (once create-app supports template selection — TT-185) provision via the Two Trees Platform dashboard. Spawning the `python-temp-pro` composite via create-app provisions BOTH the Node side (this template) AND the Python side automatically, wiring them with a shared HMAC secret + shared Neon DB.
 
-### 2. Install Dependencies
-
-```bash
+```sh
+git clone https://github.com/Two-Trees-Digital/<your-app-name>.git
+cd <your-app-name>
 pnpm install
 ```
 
-pnpm reads `pnpm-workspace.yaml` and installs all workspace packages in a single step.
+### 2. Configure environment
 
-### 3. Configure Environment Variables
-
-Copy `.env.example` to `.env` at the repo root and fill in values:
-
-```bash
-cp .env.example .env
-```
-
-The full var reference (with comments on what each one does + where to get
-the secret) lives in `.env.example`. The minimum required to run locally:
+Copy `.env.example` to `.env` and fill in. The **Python-service vars** are required for the composite pattern:
 
 ```env
-# Database
-DATABASE_URL="postgresql://user:password@host:5432/db"
-DIRECT_URL="postgresql://user:password@host:5432/db"
-
-# Redis (BullMQ)
-REDIS_URL="redis://localhost:6379"
-
-# Auth (TT-118) — required
-NEXTAUTH_SECRET="<openssl rand -base64 32>"
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
+PYTHON_SERVICE_URL=http://localhost:8000           # full URL of paired Python service
+HMAC_SHARED_SECRET=<openssl rand -hex 32>          # MUST match Python side EXACTLY
 ```
 
-Optional:
+Standard turbo-temp vars (`DATABASE_URL`, `NEXTAUTH_SECRET`, etc.) — see `.env.example` for the full list.
 
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — enables the Google sign-in button
-- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — enables the GitHub sign-in button (dashboard only)
-- `RESEND_API_KEY` / `RESEND_FROM_EMAIL` — enables real password-reset emails (dev falls back to console logging)
-- `NEXTAUTH_COOKIE_DOMAIN` — set to `.example.com` for SSO across subdomains; leave blank otherwise
+### 3. Set up the database
 
-### 4. Set Up the Database
-
-Generate the Prisma client and create the database schema:
-
-```bash
-pnpm db:generate
-pnpm db:push
+```sh
+pnpm db:deploy        # apply all migrations
+pnpm db:generate      # regenerate Prisma client
 ```
 
-### 5. Start Development
+### 4. Start everything
 
-```bash
-pnpm dev
+```sh
+pnpm dev              # app on 3000, dashboard on 3001, worker watching
 ```
 
-This concurrently starts:
-- **app** on http://localhost:3000 (Next.js marketing site)
-- **dashboard** on http://localhost:3001 (Next.js admin dashboard)
-- **worker** (BullMQ job processor)
+In a separate terminal, start the paired Python service:
 
-To run specific apps only:
-
-```bash
-pnpm dev --filter app --filter dashboard
+```sh
+cd ../python-temp-pro-service     # or wherever your Python side lives
+uvicorn app.main:app --reload --port 8000
 ```
 
 ---
 
-## Database
+## Calling the Python service
 
-All data lives in PostgreSQL and is accessed through Prisma ORM. The database schema is version-controlled via migrations.
+Three patterns are wired in this template:
 
-### Schema & Migrations
+### 1. From the worker (queued, async, retryable)
 
-The schema lives in `packages/database/prisma/schema.prisma`. The template includes three core models:
+The recommended pattern. Producer enqueues a `PythonServiceJobData` payload; the worker dequeues, signs, and POSTs.
 
-| Model | Purpose |
-|-------|---------|
-| **User** | User accounts with email, optional password, and role-based access |
-| **Role** | RBAC roles (e.g., ADMIN, USER) |
-| **Todo** | Personal to-do items linked to users |
+```ts
+// In a route handler or Apollo resolver:
+import { getPythonServiceQueue } from "queue";
 
-All models support soft deletes via a `deletedAt` field.
-
-### Common Database Commands
-
-Run these from the **repo root**:
-
-```bash
-# Generate/regenerate the Prisma client after schema changes
-pnpm db:generate
-
-# Create a new migration after editing schema.prisma
-pnpm db:migrate
-# → Prisma prompts for a name (e.g., "add_users_table")
-# → Generates SQL in packages/database/prisma/migrations/
-# → Applies it to the database immediately
-
-# Apply pending migrations (used in CI/CD)
-pnpm db:deploy
-
-# View migration status
-pnpm db:status
-
-# Push schema changes directly (local dev only, NOT production)
-pnpm db:push
-```
-
-### Making a Schema Change
-
-1. **Edit the schema** in `packages/database/prisma/schema.prisma`
-2. **Run `pnpm db:migrate`** locally and give the migration a descriptive name
-3. **Commit the generated SQL file** in `packages/database/prisma/migrations/`
-4. **Push to main** — the deploy workflow automatically runs `prisma migrate deploy` before building
-
-**Never use `pnpm db:push` in production.** It skips the migration system entirely, leaving no history.
-
----
-
-## Apps
-
-### 1. **app** — Marketing Site / Main App (Port 3000)
-
-Next.js 14 with App Router. Serves as your customer-facing website or primary application frontend.
-
-**Key files:**
-- `apps/app/src/app/` — Pages, layouts, and API routes
-- `apps/app/next.config.js` — Next.js configuration
-- `apps/app/tailwind.config.js` — Tailwind CSS configuration
-
-**Features:**
-- Authentication-ready (NextAuth v4)
-- Tailwind CSS + Radix UI components
-- DB-backed content stubs in `src/app/blog`, `src/app/portfolio`, `src/app/services` (Contentlayer was removed during the April 2026 outage recovery — wire to Prisma or your CMS of choice)
-
-### 2. **dashboard** — Admin Dashboard (Port 3001)
-
-Next.js 14 admin interface for managing your application.
-
-**Key files:**
-- `apps/dashboard/src/app/` — Dashboard pages and API routes
-- `apps/dashboard/src/components/` — UI components
-- `apps/dashboard/.env.local` — Dashboard-specific secrets
-
-**Features:**
-- NextAuth authentication
-- Prisma database integration
-- Job queue integration for background tasks
-
-**Important:** Dashboard has `cache: false` in turbo.json because Prisma engine binaries are platform-specific. Never enable caching for `dashboard#build`.
-
-### 3. **worker** — BullMQ Job Processor
-
-Background job processor for long-running tasks. Runs in Docker.
-
-**Deployment:** Docker on Railway (via `apps/worker/Dockerfile`)
-
-**Key files:**
-- `apps/worker/src/index.ts` — Worker entry point
-- `apps/worker/Dockerfile` — Docker build config
-
-**Note:** Excluded from Vercel builds. Deploy separately using Docker.
-
----
-
-## Packages (Shared Libraries)
-
-### 1. **database** — Prisma ORM
-
-Defines the database schema and provides a shared Prisma client.
-
-**Key files:**
-- `packages/database/prisma/schema.prisma` — Database schema
-- `packages/database/prisma/migrations/` — Migration history
-- `packages/database/index.ts` — Re-exports Prisma client
-
-**Usage:**
-```typescript
-import { PrismaClient } from "database";
-const prisma = new PrismaClient();
-
-const user = await prisma.user.findUnique({
-  where: { id: "user-123" },
+await getPythonServiceQueue().add("my-job", {
+  endpoint: "/my-endpoint",
+  payload:  { userId, foo: "bar" },
+  meta:     { requestId: req.id },
 });
 ```
 
-### 2. **queue** — BullMQ + Redis
+### 2. Direct from API resolver (sync, blocking, no retry)
 
-Generic job queue factory and Redis connection management.
+For low-latency calls where you need the response before returning to the client:
 
-**Key files:**
-- `packages/queue/index.ts` — Queue factory and exports
+```ts
+import { signedPost } from "queue";
 
-**Usage:**
-```typescript
-import { QueueMQ, makeConnection, Worker } from "queue";
-
-// Create a queue
-const myQueue = QueueMQ("my-queue");
-await myQueue.add("job-name", { /* job data */ });
-
-// Create a worker (with dedicated connection)
-const worker = new Worker("my-queue", processor, {
-  connection: makeConnection(),
+const result = await signedPost({
+  url:    `${process.env.PYTHON_SERVICE_URL}/my-endpoint`,
+  body:   { userId, foo: "bar" },
+  secret: process.env.HMAC_SHARED_SECRET!,
 });
+
+if (!result.ok) throw new GraphQLError(`Python service error: ${result.error}`);
+return result.data;
 ```
 
-### 3. **email** — Resend Integration
+### 3. From the dashboard via /api proxy
 
-Transactional email wrapper around [Resend](https://resend.com). Used by
-`packages/auth` for password-reset emails. In dev (`NODE_ENV !== "production"`)
-sends are no-op'd to console so you can develop without a Resend account.
-
-**Key files:**
-- `packages/email/index.ts` — Email sending functions
-
-**Usage:**
-```typescript
-import { sendPasswordResetEmail } from "email";
-
-await sendPasswordResetEmail({
-  toEmail:          "user@example.com",
-  toName:           "Jane",
-  resetLink:        "https://example.com/reset-password?token=abc",
-  expiresInMinutes: 60,
-});
-```
-
-**Env vars:** `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (bare email, no quotes —
-Vercel stores quotes literally and Resend rejects the malformed `from`).
-
-### 4. **auth** — Shared NextAuth Config (TT-118)
-
-Single source of truth for authentication. Both `apps/app` and
-`apps/dashboard` consume `buildAuthOptions()` from this package, so adding
-a provider or tightening the signIn callback is a one-place change.
-
-**Includes:**
-- `buildAuthOptions({ appName, prisma, google?, github?, cookieDomain? })` — factory for NextAuth options
-- `requestPasswordReset()` / `consumePasswordReset()` — token-based reset flow
-- `MIN_PASSWORD_LENGTH`, `RESET_TOKEN_TTL_MINUTES` — shared constants
-- `generateAuthToken()` — JWT helper re-exported by both apps' `src/utils`
-- A `PrismaAdapter` wrapper that bridges the User-schema mismatch with NextAuth's expected fields
-
-**Env vars consumed:** `NEXTAUTH_SECRET` (required), `NEXTAUTH_URL` (prod),
-`NEXTAUTH_COOKIE_DOMAIN` (optional, for cross-subdomain SSO),
-`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
-`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`.
-
-### 5. **env** — Env-Context Helpers
-
-Tiny package — `isLocal()`, `isPreview()`, `marketingAppUrl()`,
-`dashboardUrl()`. Use these instead of inline `process.env.NODE_ENV` checks
-or hardcoded URL fallbacks. Defaults to `https://example.com` if app URL
-env vars are unset, so cloned repos don't crash before you wire them up.
-
-### 6. **ui** — React Component Library
-
-Shared, reusable React components used across app and dashboard.
-
-**Key files:**
-- `packages/ui/src/components/` — Component definitions
-- `packages/ui/package.json` — Exports
-
-### 7. **eslint-config** — ESLint Presets
-
-Shared ESLint configuration for consistent code quality.
-
-**Usage:**
-```javascript
-// .eslintrc.js
-module.exports = {
-  extends: ["eslint-config/next"],
-};
-```
-
-### 8. **typescript-config** — tsconfig Bases
-
-Shared TypeScript configurations for different app types.
-
-**Usage:**
-```json
-{
-  "extends": "typescript-config/nextjs"
-}
-```
-
----
-
-## Turborepo Pipeline
-
-Build and task orchestration defined in `turbo.json`.
-
-### Task Definitions
-
-| Task | Dependencies | Cached? | Details |
-|------|---|---|---|
-| `dev` | `^db:generate` | ✗ | Runs dev servers concurrently |
-| `build` | `^build`, `^db:generate` | ✓ | Outputs Next.js builds |
-| `dashboard#build` | `^build`, `^db:generate` | ✗ | **Never cache** — Prisma binaries are platform-specific |
-| `db:generate` | — | ✗ | Prisma client generation |
-| `lint` | `^lint` | ✓ | ESLint checks |
-
-### Filtering Tasks
-
-Run tasks on specific packages:
-
-```bash
-# Build only app and dashboard
-pnpm build --filter app --filter dashboard
-
-# Run dev for dashboard only
-pnpm dev --filter dashboard
-
-# Exclude worker from builds
-pnpm build --filter=!worker
-```
+For browser → Python service flows (e.g., SSE streaming), proxy through a Next.js route handler in `apps/dashboard/src/app/api/`. The proxy mints any browser-safe auth (e.g., query-param token for SSE) and forwards the request. **The browser never sees `HMAC_SHARED_SECRET` directly.**
 
 ---
 
 ## Deployment
 
-### Vercel (App + Dashboard)
+### Vercel (apps/app + apps/dashboard)
 
-Automated deployments via GitHub Actions (`.github/workflows/deploy-vercel.yml`). Triggered on push to `main`.
+Auto-deploys on push to `main`. Migrations applied via `prisma migrate deploy` in the build step. Set on Vercel project env vars:
 
-**Pipeline:**
-1. Apply pending database migrations
-2. Generate Prisma client
-3. Build Next.js apps
-4. Deploy to Vercel
+- All standard turbo-temp env vars (DATABASE_URL, NEXTAUTH_SECRET, etc.)
+- `PYTHON_SERVICE_URL` (the Python service's production URL)
+- `HMAC_SHARED_SECRET` (must match Python service's value exactly)
 
-**Required GitHub Secrets:**
-- `VERCEL_TOKEN` — Personal access token
-- `VERCEL_ORG_ID` — Organization ID
-- `VERCEL_APP_PROJECT_ID` — App project ID
-- `VERCEL_DASHBOARD_PROJECT_ID` — Dashboard project ID
+### Railway (apps/worker)
 
-**Environment Variables in Vercel:**
-Set `DATABASE_URL` and `DIRECT_URL` in project settings.
+Auto-rebuilds on push to main. Env vars on the Railway service:
 
-### Docker (Worker)
+- All worker-required vars (DATABASE_URL, REDIS_URL, RESEND_API_KEY)
+- `PYTHON_SERVICE_URL`
+- `HMAC_SHARED_SECRET`
 
-Deploy the worker as a standalone Docker service on Railway or similar.
+### Railway (Python service — separate repo)
 
-**Dockerfile:** `apps/worker/Dockerfile`
+See [python-temp-pro-service README](https://github.com/Two-Trees-Digital/python-temp-pro-service) for deployment. Critical: its `HMAC_SHARED_SECRET` must match the value set on Vercel + Railway here.
 
-```bash
-docker build -t my-worker apps/worker
-docker run -e REDIS_URL=... -e DATABASE_URL=... my-worker
+---
+
+## Layered relationship
+
+```
+turbo-temp                 →   Node-only template (no Python half)
+                                    ↓ extended by
+python-temp-pro            →   Node + Python composite (THIS template)
+                                    ↓ extended by
+lang-temp-pro              →   Node + Python with LangGraph (agent apps)
+```
+
+When choosing a template for a new app:
+
+- **Pure Node, no Python service** → use `turbo-temp` directly
+- **Node app + Python compute service, no agents** → `python-temp-pro` (this)
+- **Node app + Python multi-agent service** → `lang-temp-pro`
+
+---
+
+## Project structure
+
+```
+python-temp-pro/                    ← Node monorepo (this repo)
+├── apps/
+│   ├── app/                        ← Next.js user-facing (port 3000)
+│   ├── dashboard/                  ← Next.js admin (port 3001)
+│   ├── api/                        ← Apollo GraphQL
+│   └── worker/
+│       └── src/
+│           ├── index.ts            ← Worker entrypoint
+│           └── queues/
+│               ├── email-verification.ts
+│               └── python-service.ts   ← Dequeues + signs + POSTs to Python service
+├── packages/
+│   ├── queue/
+│   │   ├── index.ts                ← BullMQ + lazy queue getters + PythonServiceJobData type
+│   │   └── hmacSign.ts             ← signedPost() — HMAC-signed POST helper
+│   ├── env/
+│   │   └── index.ts                ← baseEnvSchema + pythonServiceEnvSchema
+│   ├── database/                   ← Prisma schema + migrations
+│   ├── auth/                       ← NextAuth factory
+│   ├── email/                      ← Resend wrapper
+│   └── ui/                         ← Shared React components
+├── .env.example                    ← includes PYTHON_SERVICE_URL + HMAC_SHARED_SECRET
+└── README.md (this file)
 ```
 
 ---
 
-## Extending the Template
+## References
 
-### Adding a New Database Model
-
-1. Edit `packages/database/prisma/schema.prisma`
-2. Run `pnpm db:migrate` and name your migration
-3. Import the new model in your apps: `import { MyModel } from "database"`
-
-### Adding a New Job Queue
-
-1. In your app, use the generic queue factory:
-   ```typescript
-   import { QueueMQ, makeConnection, Worker } from "queue";
-   
-   const myQueue = QueueMQ("my-queue");
-   await myQueue.add("job-name", jobData);
-   ```
-
-2. In the worker, create a processor:
-   ```typescript
-   const worker = new Worker("my-queue", processor, {
-     connection: makeConnection(),
-   });
-   ```
-
-### Adding a New Package
-
-1. Create a directory: `mkdir packages/my-package`
-2. Add `package.json` with a unique name
-3. Run `pnpm install` to link the workspace
-4. Import from other apps: `import { ... } from "my-package"`
-
-### Adding a New App
-
-1. Create directory: `mkdir apps/my-app`
-2. Copy `next.config.js`, `tsconfig.json`, `package.json` from existing app
-3. Update the name in `package.json`
-4. Run `pnpm install`
-5. Add scripts to `turbo.json` if needed
-6. Test locally: `pnpm dev --filter my-app`
+- **[python-temp-pro-service](https://github.com/Two-Trees-Digital/python-temp-pro-service)** — the Python FastAPI half of this composite pair
+- [turbo-temp](https://github.com/Two-Trees-Digital/turbo-temp) — Node-only template (no Python half)
+- [lang-temp-pro](https://github.com/Two-Trees-Digital/lang-temp-pro) + [lang-temp-pro-service](https://github.com/Two-Trees-Digital/lang-temp-pro-service) — Agent-app composite (extends python-temp-pro with LangGraph)
+- [lyceum-fund](https://github.com/Two-Trees-Digital/lyceum-fund) + [trading-agents-service](https://github.com/Two-Trees-Digital/trading-agents-service) — Reference implementation (agent app — lang-temp-pro shape)
+- [Two Trees Platform](https://github.com/Two-Trees-Digital/two-trees-digital-new) — Parent platform that orchestrates spawned apps
 
 ---
 
-## Environment Variables
-
-### Root `.env`
-
-The full reference — every variable, what it does, where to get the value —
-lives in [`.env.example`](./.env.example). `cp .env.example .env` and fill
-in real values. Highlights:
-
-| Var | Required? | Notes |
-|-----|-----------|-------|
-| `DATABASE_URL` | yes | Pooled (pgBouncer) Postgres URL |
-| `DIRECT_URL` | yes | Direct (non-pooled) Postgres URL — Prisma CLI |
-| `REDIS_URL` | yes | BullMQ; Upstash `rediss://` works |
-| `NEXTAUTH_SECRET` | yes | `openssl rand -base64 32` |
-| `NEXT_PUBLIC_APP_URL` | yes | Public origin of the marketing app — used for password-reset links |
-| `NEXTAUTH_URL` | prod | Set in Vercel; locally each app picks its own port |
-| `NEXTAUTH_COOKIE_DOMAIN` | optional | Set to `.example.com` for cross-subdomain SSO |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional | Google OAuth button |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | optional | GitHub OAuth (dashboard only) |
-| `RESEND_API_KEY` | optional in dev | Required to send real reset emails in prod |
-| `RESEND_FROM_EMAIL` | optional in dev | Verified sender address (no quotes!) |
-
-In dev, the email package logs to console when `RESEND_API_KEY` is unset
-or `NODE_ENV !== "production"`, so you can develop the password-reset flow
-without a Resend account.
-
-### App-Specific `.env.local`
-
-Created per-app for overrides not committed to git. The most common case is
-local-dev `NEXTAUTH_URL`:
-
-**`apps/app/.env.local`**
-```env
-NEXTAUTH_URL="http://localhost:3000"
-```
-
-**`apps/dashboard/.env.local`**
-```env
-NEXTAUTH_URL="http://localhost:3001"
-```
-
----
-
-## Common Tasks
-
-### Building for Production
-
-```bash
-pnpm build
-```
-
-This runs the full Turborepo pipeline:
-1. Generates Prisma client
-2. Builds all apps in dependency order
-3. Outputs Next.js builds
-
-### Adding a Feature
-
-1. Create a database model in `packages/database/prisma/schema.prisma`
-2. Generate migration: `pnpm db:migrate`
-3. Build the feature across your apps
-4. Push to main; GitHub Actions handles deployment
-
-### Running Database Migrations in CI/CD
-
-The deploy workflow runs `prisma migrate deploy` automatically. To manually apply pending migrations:
-
-```bash
-pnpm db:deploy
-```
-
----
-
-## Important Notes & Gotchas
-
-### 1. Dashboard Cache Disabled
-
-The `dashboard#build` task has `cache: false` in `turbo.json`. **Do not enable caching.** Prisma engine binaries are platform-specific and will fail on cache replay.
-
-### 2. DIRECT_URL Required for Prisma CLI
-
-Prisma CLI (`db:migrate`, `db:push`) requires `DIRECT_URL` and will NOT read `.env.local`. Set it in the root `.env`.
-
-### 3. Worker Excluded from Vercel
-
-The worker is not deployed to Vercel. It's a separate Docker app. To build it explicitly:
-```bash
-pnpm build --filter worker
-```
-
-### 4. TypeScript Version in Docker
-
-Pin `typescript@5` in Docker builds. TypeScript 6+ changed CLI behavior and breaks the build.
-
-### 5. Never Use `npx tsc`
-
-`npx tsc` installs the wrong npm package. Always use the globally installed `tsc` or add TypeScript to dependencies.
-
-### 6. Redis URL Format
-
-Upstash provides a `rediss://` URL (TLS-secured). Make sure your Redis client supports TLS. BullMQ does by default.
-
----
-
-## Troubleshooting
-
-### "Database connection timeout"
-- Check `DATABASE_URL` is correct
-- Verify network connectivity to database host
-- For Neon, check IP whitelist
-
-### "Prisma client not found"
-- Run `pnpm db:generate` to regenerate
-- Verify `packages/database` is installed
-
-### "Port 3000/3001 already in use"
-- Check what's running: `lsof -i :3000`
-- Kill the process: `kill -9 [PID]`
-- Or change the port in the dev script
-
-### "Worker not starting"
-- Verify `REDIS_URL` is set and accessible
-- Check `packages/queue` is installed
-- Review worker logs for errors
-
-### "GitHub Actions deploy failed"
-- Check GitHub Secrets are set correctly
-- Verify both `DATABASE_URL` and `DIRECT_URL` in Vercel
-- Review deploy logs in GitHub Actions tab
-
----
-
-## Contributing
-
-### Commits & Branching
-
-- Use descriptive commit messages: `feat: add user auth`, `fix: handle null emails`
-- Create feature branches: `git checkout -b feature/user-profiles`
-- Push to main only after code review
-
-### Code Quality
-
-- Run `pnpm lint` before committing
-- Run `pnpm format` to auto-format code
-- TypeScript strict mode is enabled — fix type errors before pushing
-
-### Database Changes
-
-- Always create migrations: `pnpm db:migrate`
-- Never manually edit SQL files
-- Commit migration files — they're part of schema history
-
----
-
-## Support & Documentation
-
-- **Turborepo docs:** https://turbo.build
-- **Next.js docs:** https://nextjs.org
-- **Prisma docs:** https://www.prisma.io
-- **BullMQ docs:** https://docs.bullmq.io
-- **NextAuth docs:** https://next-auth.js.org
-- **Resend docs:** https://resend.com/docs
-
----
-
-## License
-
-Internal Two Trees Digital template. Customize and use for your own projects.
+**Built by Two Trees Digital** 🌲 | [GitHub](https://github.com/Two-Trees-Digital)

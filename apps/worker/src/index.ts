@@ -1,39 +1,15 @@
-import { Worker, makeConnection } from "queue";
-import { sendEmailVerificationMail } from "email";
+// Worker entrypoint — boots all BullMQ Workers in this process.
+//
+// Each Worker is defined in its own file under ./queues/ so adding a
+// new queue is a single-file change. To add a new Worker:
+//   1. Create apps/worker/src/queues/<name>.ts with a startXWorker() export
+//   2. Import + call it here
+//   3. (Optional) Add the queue's getter to packages/queue/index.ts
 
-const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
-const fromEmail   = process.env.FROM_EMAIL   ?? "noreply@example.com";
+import { startEmailVerificationWorker } from "./queues/email-verification";
+import { startPythonServiceWorker } from "./queues/python-service";
 
-// Each Worker needs its own dedicated Redis connection (BullMQ uses BLPOP)
-const workerConnection = makeConnection();
+startEmailVerificationWorker();
+startPythonServiceWorker();
 
-const worker = new Worker(
-  "email-verification-queue",
-  async (job) => {
-    try {
-      const { name, email, token } = job.data;
-      const link = `${frontendUrl}/verify?token=${token}`;
-
-      await sendEmailVerificationMail(fromEmail, email, { name, link });
-      return true;
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(`[worker] Job ${job.id} failed:`, error.message);
-        throw error;
-      }
-      console.error(`[worker] Job ${job.id} failed:`, error);
-      throw new Error(`Unexpected error: ${error}`);
-    }
-  },
-  { connection: workerConnection }
-);
-
-worker.on("completed", (job) => {
-  console.log(`[worker] Job ${job?.id} completed`);
-});
-
-worker.on("failed", (job, err) => {
-  console.error(`[worker] Job ${job?.id} failed:`, err.message);
-});
-
-console.log("[worker] Started — listening for jobs on email-verification-queue");
+console.log("[worker] Started — listening for jobs on email-verification-queue + python-service-queue");

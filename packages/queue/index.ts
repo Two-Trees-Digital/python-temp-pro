@@ -45,6 +45,7 @@ const QueueMQ = (queueName: string) =>
 
 let _createAppQueue: InstanceType<typeof Queue> | null = null;
 let _notifyQueue: InstanceType<typeof Queue> | null = null;
+let _pythonServiceQueue: InstanceType<typeof Queue> | null = null;
 
 export function getCreateAppQueue(): InstanceType<typeof Queue> {
   if (!_createAppQueue) _createAppQueue = QueueMQ("create-app-queue");
@@ -56,5 +57,32 @@ export function getNotifyQueue(): InstanceType<typeof Queue> {
   return _notifyQueue;
 }
 
+/**
+ * Queue for Node → Python service calls (python-temp-pro composite pattern).
+ * Producers (API resolvers, route handlers) enqueue PythonServiceJobData;
+ * the worker dequeues, signs the body with HMAC, and POSTs to the Python
+ * service's matching endpoint.
+ */
+export function getPythonServiceQueue(): InstanceType<typeof Queue> {
+  if (!_pythonServiceQueue) _pythonServiceQueue = QueueMQ("python-service-queue");
+  return _pythonServiceQueue;
+}
+
+/**
+ * Job payload for the python-service queue. Generic shape — extend per-app
+ * by adding a discriminated `kind` field if you need multiple job types.
+ */
+export interface PythonServiceJobData {
+  endpoint: string;           // Path on the Python service, e.g. "/hello"
+  payload:  Record<string, unknown>;
+  // Optional metadata that the worker logs / Sentry-tags but doesn't send.
+  meta?: {
+    requestId?: string;
+    userId?:    string;
+  };
+}
+
 // ── Re-exports ─────────────────────────────────────────────────────────────────
 export { QueueMQ, Worker, Job };
+export { signedPost } from "./hmacSign";
+export type { SignedRequestOpts, SignedResponse } from "./hmacSign";

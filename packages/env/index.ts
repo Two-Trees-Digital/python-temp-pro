@@ -66,6 +66,26 @@ export const baseEnvSchema = z.object({
 
 export type BaseEnv = z.infer<typeof baseEnvSchema>;
 
+/**
+ * Extend with these when the spawned app uses the paired Python service
+ * (i.e., it's a python-temp-pro composite). Apps that only use the Node
+ * side don't need to set these and should skip the extension.
+ *
+ *     import { baseEnvSchema, pythonServiceEnvSchema, validateEnv } from "@repo/env";
+ *
+ *     const schema = baseEnvSchema.merge(pythonServiceEnvSchema).extend({
+ *       NEXTAUTH_SECRET: z.string().min(1, "Required"),
+ *       ...
+ *     });
+ *     export const env = validateEnv(schema);
+ */
+export const pythonServiceEnvSchema = z.object({
+  PYTHON_SERVICE_URL: z.string().url("PYTHON_SERVICE_URL must be a full URL (http://localhost:8000 in dev, https://my-svc.railway.app in prod)"),
+  HMAC_SHARED_SECRET: z.string().min(32, "HMAC_SHARED_SECRET must be at least 32 chars — must match Python side EXACTLY (openssl rand -hex 32)"),
+});
+
+export type PythonServiceEnv = z.infer<typeof pythonServiceEnvSchema>;
+
 // ── Deploy-context helpers ───────────────────────────────────────────────────
 
 /**
