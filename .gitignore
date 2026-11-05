@@ -10,8 +10,12 @@ node_modules
 .env.development.local
 .env.test.local
 .env.production.local
-# .env is intentionally NOT ignored — it holds non-secret defaults.
-# Never commit real secrets to .env.
+# TT-1220: no real env file is ever tracked. Only .env.example is,
+# and it holds placeholders. Patterns without a slash match at any depth.
+.env
+.env.*
+!.env.example
+!**/.env.example
 
 # Testing
 coverage

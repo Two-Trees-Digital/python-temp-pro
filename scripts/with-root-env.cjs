@@ -10,8 +10,11 @@
 //      "Environment variable not found: DIRECT_URL" because apps/dashboard
 //      has no .env of its own.
 //
-//   2. In CI / Vercel, env vars come from the runner — there's no .env
-//      file. The existsSync check makes this a clean no-op there.
+//   2. In CI / Vercel, env vars come from the runner. Since TT-1220 no
+//      real .env is tracked, so none ships in the build checkout and the
+//      existsSync check is a clean no-op there. (Before TT-1220 .env WAS
+//      tracked and this comment was wrong — dotenv's no-override default
+//      was the only reason platform env vars still won.)
 //
 // Usage in package.json:
 //   "build": "node ../../scripts/with-root-env.cjs 'tsc ... && prisma migrate deploy ... && next build'"
