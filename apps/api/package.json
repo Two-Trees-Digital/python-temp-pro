@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "NODE_ENV=production node ./dist/index.js",
-    "dev": "nodemon ./src/index.ts --ext ts,graphql",
+    "dev": "node --env-file-if-exists=../../.env ./node_modules/nodemon/bin/nodemon.js ./src/index.ts --ext ts,graphql",
     "build": "tsc && npm run copy-graphql-files",
     "copy-graphql-files": "copyfiles -u 1 src/**/*.graphql dist",
     "typecheck": "tsc --noEmit"
