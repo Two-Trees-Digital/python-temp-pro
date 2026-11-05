@@ -2,7 +2,12 @@
   "name": "turbo-temp",
   "private": true,
   "scripts": {
-    "dev": "turbo dev --concurrency=14",
+    "dev": "bash scripts/kill-ports.sh && turbo dev --concurrency=14",
+    "dev:safe": "bash scripts/kill-ports.sh && turbo dev --concurrency=14",
+    "dev:raw": "turbo dev --concurrency=14",
+    "dev:app": "bash scripts/kill-ports.sh 3000 && pnpm --filter app dev",
+    "dev:dash": "bash scripts/kill-ports.sh 3001 && pnpm --filter dashboard dev",
+    "dev:web": "bash scripts/kill-ports.sh 3000 3001 && turbo dev --filter=app --filter=dashboard",
     "build": "turbo build --filter=!worker --concurrency=14",
     "build:worker": "turbo build --filter=worker --concurrency=14",
     "start": "turbo start --concurrency=14",

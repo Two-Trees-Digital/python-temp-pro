@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --env-file-if-exists=../../.env ./node_modules/next/dist/bin/next dev",
     "build": "node ../../scripts/with-root-env.cjs 'tsc -p ../../packages/email/tsconfig.json && prisma migrate deploy --schema=../../packages/database/prisma/schema.prisma && prisma generate --schema=../../packages/database/prisma/schema.prisma && next build'",
     "start": "next start",
     "lint": "next lint",
